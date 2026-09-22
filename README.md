@@ -1,290 +1,209 @@
-# ARC Prize 2026 — Local Dev Starter
+# ARC-AGI-3 — Latent World Model Agent
 
-**Go from zero to your first Kaggle submission in about 10 minutes, without
-ever opening the Kaggle notebook editor.**
+Research prototype developed during an R&D internship at **SynaLinks** for the **ARC-AGI-3 / ARC Prize 2026** interactive benchmark.
 
-This is a starter kit for the [ARC Prize 2026 — ARC-AGI-3](https://www.kaggle.com/competitions/arc-prize-2026-arc-agi-3)
-competition. You'll edit one Python file on your laptop, see it actually play
-the real game environments locally, and push it to Kaggle as a submission with
-a single command.
+The objective is to build an agent that can enter an unseen game, learn how its environment reacts to actions, and plan useful behaviour without knowing the rules in advance.
 
-No Docker. No `submission.json` to hand-write. No copy-pasting between your
-editor and a notebook.
+> **Core idea:** keep perception stable, learn transition dynamics online, and separate *how to reach a state* from *which state is worth pursuing*.
 
----
+![Current ARC-AGI-3 agent architecture](docs/architecture_arc_agi3_actuelle.webp)
 
-## What you need before you start
+## Why ARC-AGI-3 is interesting
 
-- **Python 3.12** (the competition's `arc-agi` package requires it)
-  - macOS: `brew install python@3.12`
-  - Ubuntu: `sudo apt install python3.12 python3.12-venv`
-  - Windows: install from [python.org](https://www.python.org/downloads/)
-- **git** (to clone the official agent framework)
-- **A Kaggle account** with the competition rules accepted
-  ([accept here](https://www.kaggle.com/competitions/arc-prize-2026-arc-agi-3/rules))
+ARC-AGI-3 turns abstract reasoning into an interactive problem. At each step, the agent receives a 64×64 grid, chooses an action, observes the consequence, and has to infer the mechanics of a game it has never seen before.
 
-That's it. No GPU required for the starter agent.
+That naturally splits the problem into three levels:
 
----
+- **Model** — how does the environment evolve after an action?
+- **Plan** — which action sequence can reach a target state?
+- **Goal selection / supervision** — which target state actually represents progress?
 
-## Quick start
+A large part of this project was about making those responsibilities explicit instead of forcing a single model to solve all three at once.
 
-```bash
-# 1.  Clone this repo and step in
-git clone https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter.git
-cd ARC-AGI-3-Kaggle-Starter
+## Current agent
 
-# 2.  Drop your Kaggle API token (kaggle.com → Settings → Create New Token)
-#     into the project-local .kaggle/ folder (NOT your home directory)
-mkdir -p .kaggle && echo "KGAT_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" > .kaggle/access_token
-chmod 600 .kaggle/access_token
+The implementation on `main` follows a model-predictive-control loop:
 
-# 3.  One-time setup: venv, dependencies, framework
-make setup
+1. **Frozen visual encoder**  
+   The current frame is mapped to a latent representation by the LeWM visual encoder.
 
-# 4.  Open agent/my_agent.py to see the random-action starter, then edit
-#     it to make a better submission. This is the only file you change.
+2. **Frozen latent adapter**  
+   A pretrained linear adapter maps the encoder representation into the latent space used by the dynamics model and planner.
 
-# 5.  Run it locally against every game in the competition (takes seconds)
-make play-local
+3. **Online World Model**  
+   An action-conditioned dynamics model predicts the next latent state. During interaction, only the dynamics are updated from real transitions collected in the current game.
 
-# 6.  Push it to Kaggle as a submission notebook
-make submit
+4. **Observed waypoint memory**  
+   Latent states actually visited by the agent are stored as candidate intermediate goals.
 
-# 7.  Watch the run
-make status
+5. **Dominated Novelty Search (DNS)**  
+   DNS can filter waypoint candidates to preserve useful diversity in latent space without adding another training objective to the World Model.
 
-# 8.  When status shows "complete", open the notebook on kaggle.com,
-#     find your kernel, click "Submit to Competition" in the top
-#     right, and pick `submission.parquet` from the Output File
-#     dropdown. That's one of your 5 daily submissions.
-```
+6. **CEM planner**  
+   A categorical Cross-Entropy Method planner rolls out candidate action sequences through the learned dynamics and selects the trajectory that best approaches the active waypoint.
 
-That's the entire loop. Steps 4–7 are what you'll repeat as you iterate;
-step 8 is the deliberate moment when you spend a daily submission.
+7. **Receding-horizon execution**  
+   Only the first action is executed. The agent observes the new frame and replans from the updated state.
 
----
+The controller also contains coordinate-aware handling for **ACTION6**, allowing the planner to reason about both the action and its click coordinates.
 
-## The one file you edit: `agent/my_agent.py`
+## Architecture
 
-This is the only file you normally touch. It defines a class called `MyAgent`
-with two methods:
-
-```python
-class MyAgent(Agent):
-    def is_done(self, frames, latest_frame) -> bool:
-        """Return True when your agent wants to stop playing."""
-        ...
-
-    def choose_action(self, frames, latest_frame) -> GameAction:
-        """Look at the game state and return the next action."""
-        ...
-```
-
-The starter version picks random actions — a baseline that proves your whole
-pipeline works end-to-end. Replace the body of `choose_action` with your
-strategy. Everything else (Kaggle plumbing, submission file format, game
-orchestration) is handled for you.
-
----
-
-## What happens when you run `make submit`
-
-The competition is a *code* competition: you submit a notebook, Kaggle runs it
-twice.
-
-```diagram
-   make submit
-       │
-       ▼
-   ┌─────────────────────────────────────┐
-   │  Kaggle Phase A: Save & Run All     │
-   │  ─ Runs your notebook in their      │
-   │    real environment                 │
-   │  ─ Validates that your code         │
-   │    executes without errors          │
-   │  ─ make status shows "complete"     │
-   └─────────────────┬───────────────────┘
-                     │
-                     │  You click "Submit to Competition"
-                     │  on the kernel page
-                     ▼
-   ┌─────────────────────────────────────┐
-   │  Kaggle Phase B: Competition Rerun  │
-   │  ─ Your agent actually plays the    │
-   │    hidden game set                  │
-   │  ─ Your leaderboard score appears   │
-   └─────────────────────────────────────┘
-```
-
-`make submit` builds and uploads the notebook (Phase A). After
-`make status` reports `complete`, open the kernel on kaggle.com and click
-**"Submit to Competition"** to enter Phase B and get a leaderboard score.
-
-> **You only get 5 official submissions per day**, so it pays to be
-> confident before you submit: get `make play-local` passing, then submit.
-
-> **Heads up:** Before your first `make submit`, open
-> [`notebooks/kernel-metadata.json`](notebooks/kernel-metadata.json) and
-> replace `REPLACE_WITH_YOUR_USERNAME` with your Kaggle handle. The Makefile
-> will refuse to push until you do.
-
-### Choosing an accelerator
-
-The notebook is generated with a **T4 GPU** by default (matches Kaggle's
-sample submission). To change it, open
-[`scripts/build_notebook.py`](scripts/build_notebook.py) and edit **one
-line** near the top:
-
-```python
-ACCELERATOR = "t4"     # change "t4" to one of: cpu, t4, p100, rtx6000
-```
-
-Then re-run `make submit`. That's it — both the notebook metadata and
-[`notebooks/kernel-metadata.json`](notebooks/kernel-metadata.json) get
-updated automatically.
-
-| Value | Hardware | When to use |
-|---|---|---|
-| `"cpu"` | No GPU | The random starter, or any non-ML agent |
-| `"t4"` | Nvidia T4 ×2 | **Default.** Small models, fast iteration |
-| `"p100"` | Nvidia P100 | Single big-memory GPU |
-| `"rtx6000"` | Nvidia RTX 6000 (`g4-standard-48`) | Heavy ML; **ARC-AGI-3 exclusive**, burns GPU quota faster |
-
-RTX 6000 is reserved for ARC-AGI-3 notebooks only — don't use it for early
-iteration. All accelerated Kaggle sessions have internet disabled, which is
-already the default in this kit.
-
----
-
-## Agent architecture
-
-The agent now has one reference architecture:
+A simplified view of the data flow is:
 
 ```text
-Frozen visual encoder → Linear latent adapter → World Model → CEM planner
+Observation
+   ↓
+Frozen visual encoder
+   ↓
+Frozen linear adapter
+   ↓
+Current latent state ───────────────┐
+   ↓                                │
+Waypoint memory + DNS               │
+   ↓                                │
+Goal latent                         │
+   ↓                                │
+CEM planner ← Online World Model ←──┘
+   ↓
+Action
+   ↓
+ARC-AGI-3 environment
+   ↓
+Real transition → Replay buffer → Dynamics update only
 ```
 
-The encoder remains fully frozen. The `nn.Linear` adapter is trained together
-with the dynamics and decoder during offline pretraining, then frozen during
-inference. Waypoints and CEM therefore always operate in the adapted latent
-space. At startup, the agent automatically loads
-`agent/models/pretrained_heads-deterministic-linear.pt` unless
-`PRETRAINED_HEADS` explicitly selects another compatible checkpoint.
+This separation is deliberate: the **World Model learns how the environment changes**, while the **waypoint layer decides where the planner should try to go**.
 
----
+## Research evolution
 
-## All the commands
+Several directions were tested while iterating on the agent:
 
-| Command | What it does |
-|---|---|
-| `make setup` | One-time install: Python venv, `arc-agi`, `kaggle` CLI, clones the framework |
-| `make play-local` | Runs your agent against every game in the dataset, locally |
-| `make play-local GAME=ls20` | Same, but only one game (faster while debugging) |
-| `make play-local STEPS=500` | Raise/lower the per-game action budget (default 200) |
-| `make monitor GAME=ls20` | `play-local` plus a live arcade window: current frame, 3-D PCA sphere of the latent trajectory (drag to rotate), the CEM plan decoded to imagined frames, and the button row with action semantics (↑↓←→ F ◎ ↺) |
-| `make pretrain` | Deterministically pretrain the latent adapter, dynamics, and decoder on random-exploration traces. The result (`agent/models/pretrained_heads-deterministic-linear.pt`) is auto-loaded by the agent |
-| `make pretrain PRETRAIN_ARGS="--games vc33 --epochs 5"` | Pass any `pretrain.py` flags (`--limit`, `--explore-steps`, …) |
-| `make verify-local` | 30-second smoke test on two games |
-| `make list-games` | Print every game id available |
-| `make pull-sample` | Download the official sample agent for reference |
-| `make notebook` | Build the Kaggle notebook from your agent (no push) |
-| `make submit` | Build the notebook **and** push it to Kaggle |
-| `make status` | Check the status of your most recent Kaggle run |
-| `make clean` | Remove the venv, downloads, and generated notebook |
+- auxiliary reward/progress heads;
+- online adaptation to unseen games;
+- direct encoder fine-tuning;
+- frozen encoder + dense latent adapter;
+- simplified dynamics-only World Model training;
+- waypoint-based goal selection;
+- Dominated Novelty Search for waypoint diversity;
+- an experimental **RLM/LLM supervision** layer for proposing semantic goals;
+- links with **neuro-symbolic reasoning** and hierarchical supervision in robotics.
 
-### Pretraining comparison
+The public controller on `main` currently corresponds to the **waypoints + DNS + CEM** architecture. The RLM supervision work is documented as a research direction rather than presented as part of the current production controller.
 
-| Knob | What it does |
-|---|---|
-| `COLD=1` | Skip the pretrained adapter, dynamics, and decoder weights while retaining the same architecture. This is useful for comparing a pretrained run with a randomly initialised one. |
+For the full reasoning behind these iterations, see:
 
-Example comparison:
+**[Research note — World Models, supervision, neuro-symbolic reasoning and robotics (FR)](docs/article_arc_agi_3_linkedin_v3.md)**
 
-```bash
-make play-local GAME=ls20 STEPS=300          # pretrained checkpoint
-make play-local GAME=ls20 STEPS=300 COLD=1   # same architecture, no warm start
-```
+## Repository structure
 
-`make pretrain` learns exclusively from random-exploration traces generated by
-the local ARC-AGI-3 engine and cached under `dataset/.explore/`. Human replay
-trajectories are never included in the optimisation corpus. The directory
-`dataset/public_games-dataset/` is currently used only to enumerate the game
-identifiers for exploration; its recorded human actions and observations are
-not read by the training loop.
-
----
-
-## Why this setup, instead of editing in the Kaggle notebook?
-
-Three reasons:
-
-1. **Iteration speed.** Editing in your normal IDE, then `make play-local`,
-   gives you a real-game-engine feedback loop in seconds. The Kaggle editor's
-   loop is *minutes* per change.
-2. **No environment surprises.** The local `arc-agi` PyPI package hosts the
-   same game engine the Kaggle gateway runs. If it works locally, it works on
-   Kaggle.
-3. **Your code stays in git.** Notebooks are awful for diffs and code review.
-   Here your real work lives in [`agent/my_agent.py`](agent/my_agent.py); the
-   notebook is just an auto-generated deployment artifact.
-
----
-
-## Project layout
-
-```
+```text
 .
 ├── agent/
-│   └── my_agent.py             ★ The file you edit
+│   ├── my_agent.py
+│   ├── monitor.py
+│   └── models/
+│       ├── pretrained_heads-deterministic-linear.pt
+│       └── lewm-pusht/
+│           ├── config.json
+│           ├── README.md
+│           └── weights.pt
+├── docs/
+│   ├── article_arc_agi_3_linkedin_v3.md
+│   └── architecture_arc_agi3_actuelle.webp
 ├── scripts/
-│   ├── play_local.py           Runs your agent against real games
-│   ├── build_notebook.py       Packages your agent into a Kaggle notebook
-│   └── slim_framework.py       Trims framework deps so install is light
-├── notebooks/
-│   ├── kernel-metadata.json    Edit once: your Kaggle username
-│   └── submission.ipynb        Auto-generated, never edit by hand
-├── vendor/                     Cloned framework (gitignored)
-├── .venv/                      Python 3.12 venv (gitignored)
-├── .kaggle/                    Your project-local Kaggle token (gitignored)
-└── Makefile
+│   ├── build_notebook.py
+│   ├── play_local.py
+│   └── slim_framework.py
+├── pretrain.py
+├── Makefile
+└── README.md
 ```
 
----
+Large datasets, local recordings, environment files, credentials and generated notebooks are intentionally excluded through `.gitignore`.
 
-## Troubleshooting
+## Run locally
 
-**`make setup` fails: `python3.12: command not found`**
-Install Python 3.12 — the `arc-agi` package requires it. macOS:
-`brew install python@3.12`.
+### Requirements
 
-**`make submit` says "edit kernel-metadata.json"**
-You haven't replaced `REPLACE_WITH_YOUR_USERNAME` in
-[`notebooks/kernel-metadata.json`](notebooks/kernel-metadata.json) yet.
+- Python **3.12**
+- Git
+- A Kaggle account only if you want to build/push a competition submission
 
-**`make submit` says `401 Unauthorized`**
-Your Kaggle token is missing or invalid. Generate a fresh one from your
-[Kaggle Settings page](https://www.kaggle.com/settings) and overwrite
-`.kaggle/access_token`.
+### Setup
 
-**`make play-local` says "Could not create environment"**
-Your machine couldn't reach the ARC-AGI API to download the game source on
-first run. Check your internet, then try again — once downloaded, games are
-cached in `environment_files/` and you're fully offline.
+```bash
+git clone https://github.com/31nidal/ARC-AGI-3.git
+cd ARC-AGI-3
+make setup
+```
 
-**My local score is 0.0**
-That's expected for the random starter agent. Your job is to make it
-non-zero. 🙂
+### Play
 
----
+Run the agent across the available games:
 
-## Where to go next
+```bash
+make play-local
+```
 
-- Read the [ARC-AGI-3 docs](https://docs.arcprize.org/) to understand the
-  benchmark.
-- `make pull-sample` to study Kaggle's reference agent (the same one
-  currently sitting on the leaderboard).
-- The competition's [discussion forum](https://www.kaggle.com/competitions/arc-prize-2026-arc-agi-3/discussion)
-  for community Q&A.
+Run a single game while debugging:
 
-Good luck. Looking forward to seeing what you build.
+```bash
+make play-local GAME=ls20
+```
+
+Change the action budget:
+
+```bash
+make play-local GAME=ls20 STEPS=500
+```
+
+### Visual monitor
+
+```bash
+make monitor GAME=ls20
+```
+
+The monitor displays the current game frame, a PCA view of the latent trajectory, waypoint information and decoded imagined CEM rollouts.
+
+### Pretraining
+
+```bash
+make pretrain
+```
+
+The resulting adapter/dynamics checkpoint is stored under `agent/models/` and can be compared against a cold start with:
+
+```bash
+make play-local GAME=ls20 COLD=1
+```
+
+### Kaggle submission
+
+Create the local notebook:
+
+```bash
+make notebook
+```
+
+Push it to Kaggle:
+
+```bash
+make submit
+```
+
+Kaggle credentials belong in `.kaggle/`, which is ignored by Git.
+
+## Current limitation
+
+The main lesson from the waypoint experiments is that **latent novelty is not the same thing as task progress**.
+
+The planner can become better at reaching a selected latent state while that state still has little semantic value for solving the game. This is why goal selection and higher-level supervision became a separate research question in the later part of the project.
+
+## Origin and attribution
+
+This repository started from the official **[ARC-AGI-3 Kaggle Starter](https://github.com/arcprize/ARC-AGI-3-Kaggle-Starter)** and was extended with the World Model, latent adaptation, online learning, waypoint/DNS memory, CEM planning and monitoring work described above.
+
+ARC-AGI-3 documentation: **[docs.arcprize.org](https://docs.arcprize.org/)**
+
+This is a personal research repository and not an official ARC Prize repository.
