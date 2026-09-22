@@ -93,7 +93,7 @@ The public controller on `main` currently corresponds to the **waypoints + DNS +
 
 For the full reasoning behind these iterations, see:
 
-**[Research note — World Models, supervision, neuro-symbolic reasoning and robotics (FR)](docs/article_arc_agi_3_linkedin_v3.md)**
+**[Research note — World Models, supervision, neuro-symbolic reasoning and robotics (FR)](docs/article_arc_agi_3.md)**
 
 ## Repository structure
 
