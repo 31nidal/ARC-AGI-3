@@ -1,0 +1,26 @@
+# Kaggle credentials
+.kaggle/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Dataset (>6GB, individual recordings exceed GitHub 100MB limit)
+dataset/
+
+# Vendored framework + agent recordings + logs
+vendor/
+environment_files/
+recordings/
+logs.log
+
+# Generated artefacts
+notebooks/submission.ipynb
+reference/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
